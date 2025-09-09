@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Gabagool</title>
+
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    body { margin:0; background:#000; color:#fff; font-family:monospace; overflow:hidden; }
+    #splashContainer, #gameContainer {
+      width:100%; height:100%;
+      display:flex; flex-direction:column; justify-content:center; align-items:center;
+    }
+    #gameContainer { display:none; position:relative; background:#000; }
+    canvas#gameCanvas { display:block; background:#000; image-rendering:pixelated; width:100vw; height:100vh; }
+
+    #overlay, #pauseOverlay {
+      position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column;
+      background:rgba(0,0,0,0.6); color:#fff; gap:16px; text-shadow:1px 1px 2px #000;
+    }
+    #overlay h2, #pauseOverlay h2{ margin:0; font-size:32px; }
+    #restartBtn{ font-size:20px; padding:12px 24px; cursor:pointer; border:none; border-radius:8px; background:#cc0000; color:#fff; }
+
+    /* HUD */
+    #hud {
+      position:absolute; top:12px; left:14px;
+      font-family: "Press Start 2P", monospace;
+      user-select:none; pointer-events:none;
+      text-shadow:
+        2px  0px #000, -2px  0px #000, 0px  2px #000, 0px -2px #000,
+        2px  2px #000, -2px  2px #000, 2px -2px #000, -2px -2px #000;
+    }
+    #scoreHud{ font-size:28px; color:#ffd14a; margin-bottom:10px; }
+    #heartsCanvas { display:block; image-rendering:pixelated; width:auto; height:auto; }
+
+    /* Dev Panel (hidden; open via shortcut) */
+    #devPanel {
+      position: absolute; top: 50px; right: 10px; z-index: 10; width: 360px;
+      max-height: calc(100vh - 60px); overflow: auto;
+      background: #0b0b0b; border: 1px solid #333; border-radius: 12px; padding: 12px;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.45); display: none;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    #devPanel h3 { margin: 8px 0 10px; font-size: 16px; color: #ffd14a; }
+    .grp { border-top: 1px solid #222; padding-top: 10px; margin-top: 10px; }
+    .row { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:6px 0; }
+    .row label { font-size: 12px; color:#ddd; }
+    .row input[type="number"],
+    .row input[type="text"],
+    .row select { width: 180px; background:#111; color:#fff; border:1px solid #444; border-radius:8px; padding:4px 6px; }
+    .btns { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+    .btn {
+      background:#1f2937; color:#fff; border:1px solid #334155; border-radius:8px; padding:6px 10px; cursor:pointer;
+    }
+    .btn.warn { background:#7c2d12; border-color:#9a3412; }
+    .btn.ok { background:#065f46; border-color:#064e3b; }
+    small.help { color:#a1a1aa; display:block; margin-top:6px; line-height:1.25; }
+    .status { margin-top:6px; font-size:12px; color:#a1a1aa; }
+  </style>
+</head>
+<body>
+  <div id="splashContainer">
+    <img src="Graphics/Splash Graphic.png" alt="Splash" style="max-width:90vw;max-height:60vh; margin-bottom:20px"/>
+    <img src="Graphics/Gabagool Text-Splash.png" alt="Gabagool Text" style="max-width:80vw; margin-bottom:30px"/>
+    <button id="startBtn">Start Game</button>
+  </div>
+
+  <div id="gameContainer">
+    <!-- Dev panel is intentionally hidden (no on-screen toggle) -->
+    <div id="devPanel">
+      <h3>Developer Controls (⌘D on macOS, Ctrl+Shift+D on Windows/Linux)</h3>
+
+      <div class="grp">
+        <div class="row"><label>Tony Move Speed</label><input id="cfg_moveSpeed" type="number" step="0.1" min="0.1"></div>
+        <div class="row"><label>Enemy Spawn Every (ms)</label><input id="cfg_enemySpawnEvery" type="number" step="100" min="200"></div>
+        <div class="row"><label>Max Enemies On Screen</label><input id="cfg_enemyMax" type="number" step="1" min="0"></div>
+      </div>
+
+      <div class="grp">
+        <div class="row"><label>Sando per N Enemies</label><input id="cfg_sandoThreshold" type="number" step="1" min="1"></div>
+        <div class="row"><label>Max Sandos On Screen</label><input id="cfg_sandoMax" type="number" step="1" min="0"></div>
+        <div class="row"><label>Sando Height Mode</label>
+          <select id="cfg_sandoYMode">
+            <option value="aboveTony">Above Tony</option>
+            <option value="ground">Ground</option>
+            <option value="fixed">Fixed (px)</option>
+            <option value="percent">Percent of Screen</option>
+          </select>
+        </div>
+        <div class="row"><label>Above Tony Offset (px)</label><input id="cfg_sandoYOffset" type="number" step="1" min="-200" max="200"></div>
+        <div class="row"><label>Fixed Y (px)</label><input id="cfg_sandoFixedY" type="number" step="1" min="0"></div>
+        <div class="row"><label>Percent Y (0-1)</label><input id="cfg_sandoPercentY" type="number" step="0.01" min="0" max="1"></div>
+        <div class="row"><label>X Offset Range (×canvas)</label><input id="cfg_sandoXOffsetFactor" type="number" step="0.05" min="0" max="2"></div>
+        <div class="row"><label>Height Factor (×Tony)</label><input id="cfg_sandoHFactor" type="number" step="0.01" min="0.1" max="1.0"></div>
+        <div class="row"><label>Width Factor (×Height)</label><input id="cfg_sandoWFactor" type="number" step="0.1" min="1" max="4"></div>
+        <div class="row"><label>Speed Min (px/f)</label><input id="cfg_sandoVxMin" type="number" step="0.1" min="0"></div>
+        <div class="row"><label>Speed Rand (+px/f)</label><input id="cfg_sandoVxRand" type="number" step="0.1" min="0"></div>
+      </div>
+
+      <div class="grp">
+        <div class="row"><label>Sando Image Path</label><input id="cfg_sandoImgSrc" type="text" placeholder="Graphics/sando.png"></div>
+        <div class="btns">
+          <button class="btn ok" id="btnReloadSandoImg">Reload Image</button>
+        </div>
+        <div class="status" id="sandoImgStatus">Image status: —</div>
+      </div>
+
+      <div class="btns">
+        <button class="btn ok" id="btnSave">Save</button>
+        <button class="btn warn" id="btnResetDefaults">Reset Defaults</button>
+        <button class="btn" id="btnSpawnEnemy">Spawn Enemy</button>
+        <button class="btn" id="btnSpawnSando">Spawn Sando</button>
+      </div>
+      <small class="help">Pause with <b>P</b>. Dev Panel toggle: ⌘D (macOS) or Ctrl+Shift+D (Windows/Linux).</small>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- HUD -->
+    <div id="hud">
+      <div id="scoreHud">SCORE 00000</div>
+      <canvas id="heartsCanvas" width="160" height="28"></canvas>
+    </div>
+
+    <div id="overlay">
+      <h2>Tony Got Whacked</h2>
+      <button id="restartBtn">Restart</button>
+    </div>
+
+    <div id="pauseOverlay">
+      <h2>Paused — Press P to resume</h2>
+    </div>
+  </div>
+
+  <!-- Sounds -->
+  <audio id="scoreSound"   src="Sounds/score.mp3"             preload="auto"></audio>
+  <audio id="damageSound"  src="Sounds/damage.wav"            preload="auto"></audio>
+  <audio id="deathSound"   src="Sounds/death.wav"             preload="auto"></audio>
+  <audio id="pistolSound"  src="Sounds/pistol shot.mp3"       preload="auto"></audio>
+  <audio id="powerSound"   src="Sounds/Gaba_1_Power_up.wav"   preload="auto"></audio>
+
+  <script>
+    const $ = (id)=>document.getElementById(id);
+    const splash = $("splashContainer"), game = $("gameContainer");
+    const startBtn = $("startBtn"), restartBtn = $("restartBtn");
+    const canvas = $("gameCanvas"), ctx = canvas.getContext("2d");
+    const overlay = $("overlay");
+    const pauseOverlay = $("pauseOverlay");
+    const scoreHud = $("scoreHud");
+    const heartsCanvas = $("heartsCanvas"), heartsCtx = heartsCanvas.getContext("2d");
+    const scoreSound  = $("scoreSound");
+    const damageSound = $("damageSound");
+    const deathSound  = $("deathSound");
+    const pistolSound = $("pistolSound");
+    const powerSound  = $("powerSound");
+
+    /* ---------- Config (defaults reflect your request) ---------- */
+    const DEFAULT_CONFIG = {
+      moveSpeed: 10,            // Tony ground speed (set to 10)
+      AIR_MULTIPLIER: 1.7,
+      gravity: 0.6,
+      jumpPower: 20,
+      jumpHoldMaxMs: 220,
+      jumpExtraMultiplier: 0.25, // up to +25% more than base if held
+      enemy: {
+        spawnEvery: 4000,
+        maxSimul: 2
+      },
+      sando: {
+        enemyThreshold: 2,       // spawn every 2nd enemy
+        maxOnScreen: 1,
+        yMode: 'aboveTony',      // 'aboveTony' | 'ground' | 'fixed' | 'percent'
+        yOffset: -6,
+        fixedY: 200,
+        percentY: 0.3,
+        xOffsetFactor: 0.4,
+        heightFactor: 0.45,
+        widthFactor: 2.2,
+        vxMin: 2.2,
+        vxRand: 2.2,
+        imgSrc: 'Graphics/sando.png'
+      },
+      hearts: {
+        scaleBase: 3,
+        scaleMultiplier: 1.5 // +50%
+      }
+    };
+    let CONFIG = loadConfig();
+
+    function loadConfig(){
+      try{
+        const raw = localStorage.getItem('gabagool_config');
+        if (!raw) return structuredClone(DEFAULT_CONFIG);
+        const obj = JSON.parse(raw);
+        return Object.assign(structuredClone(DEFAULT_CONFIG), obj);
+      }catch(e){ return structuredClone(DEFAULT_CONFIG); }
+    }
+    function saveConfig(){ try{ localStorage.setItem('gabagool_config', JSON.stringify(CONFIG)); }catch(e){} }
+    function resetDefaults(){ CONFIG = structuredClone(DEFAULT_CONFIG); saveConfig(); applyConfigToUI(); reloadSandoImage(true); }
+
+    /* ---------- Dev Panel Wiring (hidden; keyboard only) ---------- */
+    const devPanel  = $("devPanel");
+    const ui = {
+      moveSpeed: $("cfg_moveSpeed"),
+      enemySpawnEvery: $("cfg_enemySpawnEvery"),
+      enemyMax: $("cfg_enemyMax"),
+      sandoThreshold: $("cfg_sandoThreshold"),
+      sandoMax: $("cfg_sandoMax"),
+      sandoYMode: $("cfg_sandoYMode"),
+      sandoYOffset: $("cfg_sandoYOffset"),
+      sandoFixedY: $("cfg_sandoFixedY"),
+      sandoPercentY: $("cfg_sandoPercentY"),
+      sandoXOffsetFactor: $("cfg_sandoXOffsetFactor"),
+      sandoHFactor: $("cfg_sandoHFactor"),
+      sandoWFactor: $("cfg_sandoWFactor"),
+      sandoVxMin: $("cfg_sandoVxMin"),
+      sandoVxRand: $("cfg_sandoVxRand"),
+      sandoImgSrc: $("cfg_sandoImgSrc"),
+      btnReloadSandoImg: $("btnReloadSandoImg"),
+      btnSave: $("btnSave"),
+      btnResetDefaults: $("btnResetDefaults"),
+      btnSpawnEnemy: $("btnSpawnEnemy"),
+      btnSpawnSando: $("btnSpawnSando"),
+      sandoImgStatus: $("sandoImgStatus")
+    };
+
+    function applyConfigToUI(){
+      ui.moveSpeed.value = CONFIG.moveSpeed;
+      ui.enemySpawnEvery.value = CONFIG.enemy.spawnEvery;
+      ui.enemyMax.value = CONFIG.enemy.maxSimul;
+
+      ui.sandoThreshold.value = CONFIG.sando.enemyThreshold;
+      ui.sandoMax.value = CONFIG.sando.maxOnScreen;
+      ui.sandoYMode.value = CONFIG.sando.yMode;
+      ui.sandoYOffset.value = CONFIG.sando.yOffset;
+      ui.sandoFixedY.value = CONFIG.sando.fixedY;
+      ui.sandoPercentY.value = CONFIG.sando.percentY;
+      ui.sandoXOffsetFactor.value = CONFIG.sando.xOffsetFactor;
+      ui.sandoHFactor.value = CONFIG.sando.heightFactor;
+      ui.sandoWFactor.value = CONFIG.sando.widthFactor;
+      ui.sandoVxMin.value = CONFIG.sando.vxMin;
+      ui.sandoVxRand.value = CONFIG.sando.vxRand;
+      ui.sandoImgSrc.value = CONFIG.sando.imgSrc;
+    }
+    function pullUIToConfig(){
+      CONFIG.moveSpeed = clamp(+ui.moveSpeed.value, 0.1, 20);
+      CONFIG.enemy.spawnEvery = clamp(+ui.enemySpawnEvery.value, 100, 60000);
+      CONFIG.enemy.maxSimul = Math.max(0, Math.floor(+ui.enemyMax.value));
+
+      CONFIG.sando.enemyThreshold = Math.max(1, Math.floor(+ui.sandoThreshold.value));
+      CONFIG.sando.maxOnScreen = Math.max(0, Math.floor(+ui.sandoMax.value));
+      CONFIG.sando.yMode = ui.sandoYMode.value;
+      CONFIG.sando.yOffset = +ui.sandoYOffset.value;
+      CONFIG.sando.fixedY = Math.max(0, +ui.sandoFixedY.value);
+      CONFIG.sando.percentY = clamp(+ui.sandoPercentY.value, 0, 1);
+      CONFIG.sando.xOffsetFactor = clamp(+ui.sandoXOffsetFactor.value, 0, 2);
+      CONFIG.sando.heightFactor = clamp(+ui.sandoHFactor.value, 0.1, 1.0);
+      CONFIG.sando.widthFactor = clamp(+ui.sandoWFactor.value, 1, 4);
+      CONFIG.sando.vxMin = Math.max(0, +ui.sandoVxMin.value);
+      CONFIG.sando.vxRand = Math.max(0, +ui.sandoVxRand.value);
+      CONFIG.sando.imgSrc = ui.sandoImgSrc.value.trim() || 'Graphics/sando.png';
+    }
+
+    // Keyboard-only dev panel toggle:
+    // - macOS: Command+D (metaKey)
+    // - Windows/Linux: Ctrl+Shift+D (Win+D is OS-reserved and can't be captured)
+    const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+    document.addEventListener('keydown', (e)=>{
+      if (isMac) {
+        if (e.metaKey && e.code === 'KeyD') {
+          e.preventDefault();
+          toggleDevPanel();
+        }
+      } else {
+        if (e.ctrlKey && e.shiftKey && e.code === 'KeyD') {
+          e.preventDefault();
+          toggleDevPanel();
+        }
+      }
+    });
+    function toggleDevPanel(){
+      const show = devPanel.style.display !== 'block';
+      devPanel.style.display = show ? 'block' : 'none';
+      if (show) applyConfigToUI();
+    }
+
+    ui.btnSave.addEventListener('click', ()=>{ pullUIToConfig(); saveConfig(); });
+    ui.btnResetDefaults.addEventListener('click', ()=>{ resetDefaults(); });
+    ui.btnSpawnEnemy.addEventListener('click', ()=> spawnEnemy(true));
+    ui.btnSpawnSando.addEventListener('click', ()=> { if (sandwiches.length < CONFIG.sando.maxOnScreen) spawnSando(); });
+    ui.btnReloadSandoImg.addEventListener('click', ()=>{ pullUIToConfig(); reloadSandoImage(true); });
+
+    /* ---------- Helpers ---------- */
+    const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+    function logStatus(msg, isError=false){
+      if ($('sandoImgStatus')){
+        $('sandoImgStatus').textContent = "Image status: " + msg;
+        $('sandoImgStatus').style.color = isError ? "#ff6b6b" : "#a1a1aa";
+      }
+    }
+    function loadImg(p){ const i=new Image(); i.src=encodeURI(p); return i; }
+    function loadFrames(paths){ return paths.map(src=>{const i=new Image(); i.src=encodeURI(src); return i;}); }
+    const availableFrames=(fs)=>fs.filter(f=>f&&f.complete&&f.naturalWidth);
+    const firstOK=(fs)=>{const a=availableFrames(fs||[]); return a.length? a[0] : (fs&&fs[0])||null; };
+
+    /* ---------- Assets ---------- */
+    const streetImg = loadImg('Graphics/street Graphic.png');
+
+    // Tony
+    const tonyFront = loadImg('Graphics/Tony Graphics/Tony Front.png');
+    const tonyRightFrames = loadFrames(['Graphics/Tony Graphics/Tony Right.png','Graphics/Tony Graphics/Tony_Right_1.png','Graphics/Tony Graphics/Tony_Right_2.png']);
+    const tonyLeftFrames  = loadFrames(['Graphics/Tony Graphics/Tony Left.png','Graphics/Tony Graphics/Tony_Left_1.png','Graphics/Tony Graphics/Tony_Left_2.png']);
+
+    // Enemies & bullet
+    const enemy1LeftFrames = loadFrames([
+      'Graphics/Enemy 1 Graphics/Enemy 1 Left.png',
+      'Graphics/Enemy 1 Graphics/Enemy_1_Left_1.png',
+      'Graphics/Enemy 1 Graphics/Enemy_1_Left_2.png'
+    ]);
+    const enemy1RightFrames= loadFrames([
+      'Graphics/Enemy 1 Graphics/Enemy 1 Right.png',
+      'Graphics/Enemy 1 Graphics/Enemy_1_Right_1.png',
+      'Graphics/Enemy 1 Graphics/Enemy_1_Right_2.png'
+    ]);
+    const enemy1Shoot = loadImg('Graphics/Enemy 1 Graphics/Enemy_1_Shoot.png');
+    const bulletImg = loadImg('Graphics/bullet.png');
+
+    // Sandwich image with diagnostics + hot reload
+    let sandoImg = new Image();
+    let sandoImgLoaded = false;
+    function reloadSandoImage(verbose=false){
+      sandoImgLoaded = false;
+      const src = CONFIG.sando.imgSrc;
+      sandoImg = new Image();
+      sandoImg.onload = () => { sandoImgLoaded = true; logStatus("Loaded ✔ ("+src+")"); };
+      sandoImg.onerror = (e) => { console.error("[SANDO] FAILED to load image:", src, e); logStatus("Failed ✖ ("+src+") — check path/filename/casing", true); };
+      sandoImg.src = encodeURI(src) + (verbose ? ("?t=" + Date.now()) : "");
+      if (verbose) logStatus("Loading… ("+src+")");
+    }
+
+    /* ---------- World / Player ---------- */
+    let streetX=0;
+    let groundY=0, groundMargin=0;
+
+    const player={
+      x:100,y:0,w:64,h:96,dy:0,onGround:true,facing:'front',walkTime:0,bobPhase:0,
+      // jump-hold state
+      jumping:false, jumpHoldStart:0, jumpHolding:false
+    };
+
+    // Score + Hearts (energy)
+    let score=0; const maxHits=5; let hits=0; let invulnUntil=0;
+
+    function addScore(n){
+      score += n;
+      scoreHud.textContent = `SCORE ${String(score).padStart(5,'0')}`;
+      try{ scoreSound.currentTime=0; scoreSound.play(); }catch(e){}
+    }
+
+    // Hearts (+50% larger)
+    const HEART_PIXELS = ["01100110","11111111","11111111","11111111","01111110","00111100","00011000"];
+    function drawHearts(remaining, max) {
+      const scale = DEFAULT_CONFIG.hearts.scaleBase * DEFAULT_CONFIG.hearts.scaleMultiplier; // 3 * 1.5 = 4.5
+      const gap = 6;
+      const w = (8*scale)*max + gap*(max-1);
+      const h = 7*scale;
+      heartsCanvas.width = Math.ceil(w); heartsCanvas.height = Math.ceil(h);
+      heartsCtx.clearRect(0,0,heartsCanvas.width,heartsCanvas.height);
+
+      const ratio = remaining/max;
+      let color = "#4caf50"; if (ratio < 0.60 && ratio >= 0.30) color = "#ffcc00"; if (ratio < 0.30) color = "#ff3b30";
+      const lost = "#555";
+
+      for (let i=0;i<max;i++){
+        const x0 = i*(8*scale + gap);
+        const fill = i < remaining ? color : lost;
+        for (let ry=0; ry<HEART_PIXELS.length; ry++){
+          for (let rx=0; rx<HEART_PIXELS[ry].length; rx++){
+            if (HEART_PIXELS[ry][rx] === "1"){
+              heartsCtx.fillStyle = fill;
+              heartsCtx.fillRect(Math.round(x0 + rx*scale), Math.round(ry*scale), Math.ceil(scale), Math.ceil(scale));
+              heartsCtx.fillStyle = "#000";
+              heartsCtx.fillRect(Math.round(x0 + rx*scale), Math.round(ry*scale), 1, 1);
+            }
+          }
+        }
+      }
+    }
+
+    /* ---------- Entities ---------- */
+    const enemies=[]; const bullets=[]; const sandwiches=[];
+    let enemiesEntered = 0;
+    let lastSandoThreshold = 0;
+
+    const ENEMY_FPS = 8;
+    const ENEMY_SHOOT_MIN = 1800, ENEMY_SHOOT_MAX = 3000;
+    const BULLET_SPEED = 5;
+
+    /* ---------- State ---------- */
+    let spawnTimer=0;
+    let running=false, lastTs=0;
+    let paused=false;
+
+    /* ---------- Spawners ---------- */
+    function spawnEnemy(){
+      if(enemies.length >= CONFIG.enemy.maxSimul) return;
+      const w=Math.round(player.w*0.95), h=Math.round(player.h*0.95);
+      enemies.push({
+        dir:'left',
+        frames:{left:enemy1LeftFrames,right:enemy1RightFrames},
+        x: canvas.width + Math.random()*(canvas.width*0.6),
+        y: groundY - h,
+        w, h,
+        vx: -(2 + Math.random()*0.7),
+        animTime:0,
+        scored:false,
+        shooting:false,
+        shootTimer: performance.now() + (ENEMY_SHOOT_MIN + Math.random()*(ENEMY_SHOOT_MAX-ENEMY_SHOOT_MIN)),
+        shootFrameUntil:0,
+        hasEntered:false
+      });
+    }
+
+    function computeSandoY(sizeH){
+      switch(CONFIG.sando.yMode){
+        case 'ground':   return groundY - sizeH - 2;
+        case 'fixed':    return CONFIG.sando.fixedY;
+        case 'percent':  return Math.round(canvas.height * CONFIG.sando.percentY);
+        case 'aboveTony':
+        default:         return player.y - sizeH + CONFIG.sando.yOffset;
+      }
+    }
+
+    function spawnSando(){
+      if (sandwiches.length >= CONFIG.sando.maxOnScreen) return;
+      if (!sandoImgLoaded) { console.warn("[SANDO] Image not loaded yet; skipping spawn."); return; }
+
+      const sizeH = Math.round(player.h * CONFIG.sando.heightFactor);
+      const sizeW = Math.round(sizeH * CONFIG.sando.widthFactor);
+      const y = computeSandoY(sizeH);
+      const vx = -(CONFIG.sando.vxMin + Math.random()*CONFIG.sando.vxRand);
+
+      sandwiches.push({
+        x: canvas.width + 40 + Math.random() * (canvas.width * CONFIG.sando.xOffsetFactor),
+        y,
+        w: sizeW, h: sizeH,
+        vx,
+        img: sandoImg
+      });
+    }
+
+    /* ---------- Updates ---------- */
+    function enemyTryShoot(e){
+      const now = performance.now();
+      if (now < e.shootTimer) return;
+      if (e.x < canvas.width && e.x + e.w > 0) {
+        const bW = Math.max(6, Math.round(player.w*0.12));
+        const bH = Math.max(6, Math.round(player.w*0.12));
+        const bx = e.x - 4;
+        const by = e.y + Math.round(e.h*0.45);
+        bullets.push({ x:bx, y:by, w:bW, h:bH, vx:-(BULLET_SPEED + Math.random()*2), img:bulletImg });
+        e.shooting = true; e.shootFrameUntil = now + 180;
+        try{ pistolSound.currentTime=0; pistolSound.play(); }catch(e){}
+      }
+      e.shootTimer = now + (ENEMY_SHOOT_MIN + Math.random()*(ENEMY_SHOOT_MAX-ENEMY_SHOOT_MIN));
+    }
+
+    function getEnemyFrame(e){
+      if (e.shooting && performance.now() < e.shootFrameUntil && enemy1Shoot.complete && enemy1Shoot.naturalWidth){
+        return enemy1Shoot;
+      }
+      const a = availableFrames(e.frames.left);
+      if (a.length >= 2){ const idx = Math.floor(e.animTime/(1000/ENEMY_FPS)) % a.length; return a[idx]; }
+      return firstOK(e.frames.left);
+    }
+
+    function updateEnemies(cameraDx, dt){
+      for (let i=enemies.length-1;i>=0;i--){
+        const e = enemies[i];
+        e.x += cameraDx; e.x += e.vx; e.animTime += dt; e.y = groundY - e.h;
+
+        const onScreen = (e.x < canvas.width) && (e.x + e.w > 0);
+        if (onScreen && !e.hasEntered){
+          e.hasEntered = true;
+          enemiesEntered++;
+        }
+
+        enemyTryShoot(e);
+        if (e.x + e.w < -canvas.width*0.5) enemies.splice(i,1);
+      }
+    }
+
+    function drawEnemies(){
+      for (const e of enemies){
+        const img = getEnemyFrame(e);
+        if (img && img.complete && img.naturalWidth) ctx.drawImage(img, e.x|0, e.y|0, e.w|0, e.h|0);
+        else { ctx.fillStyle="#d22"; ctx.fillRect(e.x|0, e.y|0, e.w|0, e.h|0); }
+      }
+    }
+
+    function updateBullets(cameraDx){
+      for (let i=bullets.length-1;i>=0;i--){
+        const b = bullets[i];
+        b.x += cameraDx; b.x += b.vx;
+        if (b.x + b.w < -100 || b.x > canvas.width + 100) bullets.splice(i,1);
+      }
+    }
+
+    function drawBullets(){
+      for (const b of bullets){
+        if (b.img && b.img.complete && b.naturalWidth) ctx.drawImage(b.img, b.x|0, b.y|0, b.w|0, b.h|0);
+        else { ctx.fillStyle = "#ffea00"; ctx.fillRect(b.x|0, b.y|0, b.w|0, b.h|0); }
+      }
+    }
+
+    // --- Sando update/draw (straight line, no bob) ---
+    function updateSandos(cameraDx){
+      for (let i=sandwiches.length-1;i>=0;i--){
+        const s = sandwiches[i];
+        s.x += cameraDx;
+        s.x += s.vx;
+        if (s.x + s.w < -120) sandwiches.splice(i,1);
+      }
+    }
+    function drawSandos(){
+      for (const s of sandwiches){
+        if (s.img && s.img.complete && s.img.naturalWidth) {
+          ctx.drawImage(s.img, s.x|0, s.y|0, s.w|0, s.h|0);
+        } else {
+          ctx.fillStyle = "#ffeb99"; ctx.fillRect(s.x|0, s.y|0, s.w|0, s.h|0);
+          ctx.strokeStyle = "#b8860b"; ctx.strokeRect(s.x|0, s.y|0, s.w|0, s.h|0);
+        }
+      }
+    }
+
+    // Collisions
+    function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+    function shrinkRect(r,p=0.12){const px=r.w*p,py=r.h*p;return{x:r.x+px,y:r.y+py,w:r.w-2*px,h:r.h-2*py};}
+
+    function resizeCanvas(){
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      groundMargin = Math.max(24, Math.round(canvas.height * 0.10));
+      groundY = canvas.height - groundMargin;
+      const targetH = Math.round(canvas.height * 0.20);
+      player.h = Math.max(64, Math.min(160, targetH));
+      player.w = Math.round(player.h*(2/3));
+      player.x = Math.round(canvas.width*0.12);
+      player.y = groundY - player.h;
+      for (const e of enemies) e.y = groundY - e.h;
+      drawHearts(maxHits - hits, maxHits);
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // Input (with jump-hold tracking + pause on P)
+    const keys={left:false,right:false,jump:false};
+    addEventListener('keydown', e=>{
+      if (e.code==='ArrowLeft') keys.left = true;
+      if (e.code==='ArrowRight') keys.right = true;
+
+      if (e.code==='KeyP'){
+        paused = !paused;
+        pauseOverlay.style.display = paused ? 'flex' : 'none';
+        if (!paused) lastTs = 0;
+        return;
+      }
+
+      if (e.code==='Space' || e.code==='ArrowUp'){
+        if (!keys.jump) { // key transitioned to down
+          keys.jump=true;
+          tryStartJump();
+        }
+        e.preventDefault();
+      }
+    }, {passive:false});
+    addEventListener('keyup', e=>{
+      if (e.code==='ArrowLeft') keys.left = false;
+      if (e.code==='ArrowRight') keys.right = false;
+      if (e.code==='Space' || e.code==='ArrowUp'){
+        keys.jump=false;
+        player.jumpHolding = false; // stop adding extra jump
+      }
+    });
+
+    function tryStartJump(){
+      if (!running || paused) return;
+      if (player.onGround){
+        player.dy = -CONFIG.jumpPower;
+        player.onGround = false;
+        player.bobPhase = 0;
+        player.jumping = true;
+        player.jumpHolding = true;
+        player.jumpHoldStart = performance.now();
+      }
+    }
+
+    /* ---------- Loop / Spawn Logic ---------- */
+    function spawnLogic(dt){
+      spawnTimer += dt;
+      if (spawnTimer >= CONFIG.enemy.spawnEvery){
+        spawnTimer = 0;
+        spawnEnemy();
+      }
+      // Spawn a sando every CONFIG.sando.enemyThreshold enemies (your value = 2)
+      if ((enemiesEntered - lastSandoThreshold) >= CONFIG.sando.enemyThreshold
+          && sandwiches.length < CONFIG.sando.maxOnScreen){
+        spawnSando();
+        lastSandoThreshold = enemiesEntered;
+      }
+    }
+
+    function update(dt){
+      if (paused) return;
+
+      let moving=false, cameraDx=0;
+      if(keys.right){ let s=CONFIG.moveSpeed; if(!player.onGround)s*=CONFIG.AIR_MULTIPLIER; streetX-=s; player.facing='right'; moving=true; cameraDx-=s; }
+      if(keys.left){  let s=CONFIG.moveSpeed; if(!player.onGround)s*=CONFIG.AIR_MULTIPLIER; streetX+=s; player.facing='left';  moving=true; cameraDx+=s; }
+
+      // Variable jump height (+25% with hold)
+      if (player.jumping && player.jumpHolding && player.dy < 0) {
+        const now = performance.now();
+        const held = now - player.jumpHoldStart;
+        if (held <= CONFIG.jumpHoldMaxMs){
+          const addPerMs = (CONFIG.jumpPower * CONFIG.jumpExtraMultiplier) / CONFIG.jumpHoldMaxMs;
+          const add = addPerMs * dt;
+          const maxUp = -CONFIG.jumpPower * (1 + CONFIG.jumpExtraMultiplier);
+          player.dy = Math.max(player.dy - add, maxUp);
+        } else {
+          player.jumpHolding = false;
+        }
+      }
+
+      player.y += player.dy;
+      player.dy += CONFIG.gravity;
+      if(!keys.jump && player.dy < -3) player.dy *= 0.5; // early release cuts jump
+
+      if(player.y + player.h >= groundY){
+        player.y = groundY - player.h; player.dy = 0; player.onGround = true; player.jumping = false;
+      }
+      if(moving && player.onGround){ player.walkTime += dt; player.bobPhase += dt; } else { player.walkTime = 0; player.bobPhase = 0; }
+
+      spawnLogic(dt);
+      updateEnemies(cameraDx, dt);
+      updateBullets(cameraDx);
+      updateSandos(cameraDx);
+
+      const pRect = shrinkRect({x:player.x, y:player.y, w:player.w, h:player.h});
+      const now = performance.now();
+
+      // Score for jump-over
+      for (const e of enemies){
+        const overlap = (player.x+player.w>e.x) && (player.x<e.x+e.w);
+        const above   = (player.y + player.h) <= (e.y + 2);
+        if (!e.scored && !player.onGround && overlap && above){ e.scored = true; addScore(10); }
+      }
+
+      // Touch damage
+      for (const e of enemies){
+        if (rectsOverlap(pRect, {x:e.x,y:e.y,w:e.w,h:e.h}) && now >= invulnUntil){
+          applyDamage(); invulnUntil = now + 1000;
+          break;
+        }
+      }
+
+      // Bullet damage
+      for (let i=bullets.length-1; i>=0; i--){
+        const b = bullets[i];
+        if (rectsOverlap(pRect, {x:b.x, y:b.y, w:b.w, h:b.h}) && now >= invulnUntil){
+          bullets.splice(i,1);
+          applyDamage(); invulnUntil = now + 1000;
+        }
+      }
+
+      // Eat sando → heal + 10 points
+      for (let i=sandwiches.length-1; i>=0; i--){
+        const s = sandwiches[i];
+        if (rectsOverlap(pRect, {x:s.x, y:s.y, w:s.w, h:s.h})){
+          sandwiches.splice(i,1);
+          addScore(10);
+          if (hits > 0) { hits--; }
+          drawHearts(maxHits - hits, maxHits);
+          try{ powerSound.currentTime=0; powerSound.play(); }catch(e){}
+        }
+      }
+    }
+
+    function drawBackground(){
+      if(streetImg.complete && streetImg.naturalWidth){
+        const s = canvas.height / streetImg.naturalHeight;
+        const dw = streetImg.naturalWidth * s, dh = canvas.height;
+        let x = streetX % dw; if (x > 0) x -= dw;
+        for (; x < canvas.width; x += dw) ctx.drawImage(streetImg, x, 0, dw, dh);
+      } else {
+        ctx.fillStyle="#333"; ctx.fillRect(0,0,canvas.width,canvas.height);
+      }
+    }
+
+    function getWalkFrame(dir, t){
+      const frames = dir==='right' ? tonyRightFrames : tonyLeftFrames;
+      const a = availableFrames(frames);
+      if (a.length >= 2) { const idx = Math.floor(t/(1000/ENEMY_FPS)) % a.length; return a[idx]; }
+      return firstOK(frames);
+    }
+
+    function drawPlayer(){
+      const now = performance.now();
+      if (now < invulnUntil && Math.floor(now/100)%2===0) return; // blink on i-frames
+      let img;
+      if (player.facing==='right') img = getWalkFrame('right', player.walkTime);
+      else if (player.facing==='left') img = getWalkFrame('left', player.walkTime);
+      else img = tonyFront;
+      if (img && img.complete && img.naturalWidth) ctx.drawImage(img, player.x, player.y, player.w, player.h);
+      else { ctx.fillStyle="#0ef"; ctx.fillRect(player.x, player.y, player.w, player.h); }
+    }
+
+    function draw(){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      drawBackground();
+      drawSandos();
+      drawEnemies();
+      drawBullets();
+      drawPlayer();
+    }
+
+    function loop(ts){
+      if (!running) return;
+      if (!lastTs) lastTs = ts;
+      const dt = ts - lastTs; lastTs = ts;
+
+      if (!paused) { update(dt); }
+      draw();
+
+      requestAnimationFrame(loop);
+    }
+
+    function applyDamage(){
+      hits++;
+      try{ damageSound.currentTime=0; damageSound.play(); }catch(e){}
+      drawHearts(maxHits - hits, maxHits);
+      if (hits >= maxHits){
+        try{ deathSound.currentTime=0; deathSound.play(); }catch(e){}
+        endGame();
+      }
+    }
+
+    function startNewRun(){
+      streetX=0; enemies.length=0; bullets.length=0; sandwiches.length=0;
+      enemiesEntered=0; lastSandoThreshold=0;
+      spawnTimer=0; paused=false; pauseOverlay.style.display='none';
+
+      player.dy=0; player.onGround=true; player.facing='front'; player.walkTime=0; player.bobPhase=0; player.y=groundY-player.h;
+      player.jumping=false; player.jumpHolding=false;
+      score=0; scoreHud.textContent="SCORE 00000";
+      hits=0; invulnUntil=0; drawHearts(maxHits - hits, maxHits);
+
+      lastTs=0; running=true; overlay.style.display='none'; requestAnimationFrame(loop);
+    }
+
+    function startGame(){
+      splash.style.display="none"; game.style.display="flex";
+      try { if (game.requestFullscreen) game.requestFullscreen().catch(()=>{}); } catch(e){}
+      resizeCanvas();
+      reloadSandoImage(true);
+      applyConfigToUI(); // keep panel fields in sync when you open it later
+      startNewRun();
+    }
+
+    function endGame(){ running=false; overlay.style.display='flex'; }
+
+    startBtn.addEventListener("click", startGame);
+    restartBtn.addEventListener("click", startNewRun);
+
+    // initial layout
+    resizeCanvas();
+
+  </script>
+</body>
+</html>
