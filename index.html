@@ -557,12 +557,35 @@
       canvas.height = window.innerHeight;
       groundMargin = Math.max(24, Math.round(canvas.height * 0.10));
       groundY = canvas.height - groundMargin;
-      const targetH = Math.round(canvas.height * 0.20);
-      player.h = Math.max(64, Math.min(160, targetH));
+
+      // Desktop scaling was fine, but phones in portrait made Tony/enemies look huge
+      // because sprite size was based only on screen height. On touch devices, also
+      // limit the sprite size by screen width.
+      const touchLike = window.matchMedia('(pointer: coarse)').matches || ('ontouchstart' in window);
+      const targetH = touchLike
+        ? Math.round(Math.min(canvas.height * 0.22, canvas.width * 0.25))
+        : Math.round(canvas.height * 0.20);
+      player.h = Math.max(64, Math.min(touchLike ? 118 : 160, targetH));
       player.w = Math.round(player.h*(2/3));
       player.x = Math.round(canvas.width*0.12);
       player.y = groundY - player.h;
-      for (const e of enemies) e.y = groundY - e.h;
+
+      // Keep already-spawned objects in the same scale after phone rotation/resizing.
+      for (const e of enemies) {
+        e.w = Math.round(player.w*0.95);
+        e.h = Math.round(player.h*0.95);
+        e.y = groundY - e.h;
+      }
+      for (const b of bullets) {
+        const bSize = Math.max(6, Math.round(player.w*0.12));
+        b.w = bSize;
+        b.h = bSize;
+      }
+      for (const s of sandwiches) {
+        s.h = Math.round(player.h * CONFIG.sando.heightFactor);
+        s.w = Math.round(s.h * CONFIG.sando.widthFactor);
+        s.y = computeSandoY(s.h);
+      }
       drawHearts(maxHits - hits, maxHits);
     }
     window.addEventListener('resize', resizeCanvas);
@@ -610,15 +633,15 @@
     }
 
     /* ---------- Mobile Touch Controls ----------
-       Quick tap anywhere = jump
-       Hold left side = walk left
-       Hold right side = walk right
-       Hold one side with one finger, tap with another finger = jump
+       v2: no fake keyboard events and no hold delay.
+
+       Bottom-left  = hold to walk left
+       Bottom-right = hold to walk right
+       Upper screen = tap to jump
+       Hold a bottom direction with one finger, tap upper screen with another finger = jump while moving
     ------------------------------------------------ */
-    const MOBILE_TAP_MAX_MS = 180;
-    const MOBILE_TAP_MAX_MOVE = 22;
-    const MOBILE_HOLD_TO_WALK_MS = 90;
     const mobileTouches = new Map();
+    const MOBILE_MOVE_ZONE_START = 0.52; // bottom 48% of screen controls left/right walking
 
     function isInteractiveTouchTarget(target){
       return target && target.closest && target.closest('button, input, select, textarea, #devPanel');
@@ -630,22 +653,29 @@
       keys.jump = true;
       tryStartJump();
 
-      // Give tap-jump a tiny hold so it has some height, then release it.
+      // Tap-jump gets a short hold so it jumps cleanly, then releases.
       setTimeout(()=>{
         keys.jump = false;
         player.jumpHolding = false;
-      }, 110);
+      }, 125);
+    }
+
+    function getMobileTouchRole(touch){
+      const moveZoneY = window.innerHeight * MOBILE_MOVE_ZONE_START;
+
+      // Upper area is always jump. This avoids the sloppy "tap or hold?" delay.
+      if (touch.clientY < moveZoneY) return 'jump';
+
+      return touch.clientX < (window.innerWidth / 2) ? 'left' : 'right';
     }
 
     function updateMobileWalkingDirection(){
       let touchingLeft = false;
       let touchingRight = false;
-      const midScreen = window.innerWidth / 2;
 
       mobileTouches.forEach((touch)=>{
-        if (!touch.walking) return;
-        if (touch.x < midScreen) touchingLeft = true;
-        else touchingRight = true;
+        if (touch.role === 'left') touchingLeft = true;
+        if (touch.role === 'right') touchingRight = true;
       });
 
       if (touchingLeft && !touchingRight){
@@ -665,26 +695,17 @@
       e.preventDefault();
 
       Array.from(e.changedTouches).forEach((touch)=>{
-        const id = touch.identifier;
-        const touchData = {
-          startX: touch.clientX,
-          startY: touch.clientY,
-          x: touch.clientX,
-          y: touch.clientY,
-          startTime: performance.now(),
-          walking: false,
-          holdTimer: null
-        };
+        const role = getMobileTouchRole(touch);
 
-        touchData.holdTimer = setTimeout(()=>{
-          const stillActive = mobileTouches.get(id);
-          if (!stillActive) return;
-          stillActive.walking = true;
-          updateMobileWalkingDirection();
-        }, MOBILE_HOLD_TO_WALK_MS);
+        if (role === 'jump'){
+          mobileJump();
+          return;
+        }
 
-        mobileTouches.set(id, touchData);
+        mobileTouches.set(touch.identifier, { role });
       });
+
+      updateMobileWalkingDirection();
     }
 
     function handleGameTouchMove(e){
@@ -695,17 +716,8 @@
         const touchData = mobileTouches.get(touch.identifier);
         if (!touchData) return;
 
-        touchData.x = touch.clientX;
-        touchData.y = touch.clientY;
-
-        const moved = Math.hypot(
-          touchData.x - touchData.startX,
-          touchData.y - touchData.startY
-        );
-
-        if (moved > MOBILE_TAP_MAX_MOVE){
-          touchData.walking = true;
-        }
+        // Let a held direction switch sides if the thumb crosses the center line.
+        touchData.role = touch.clientX < (window.innerWidth / 2) ? 'left' : 'right';
       });
 
       updateMobileWalkingDirection();
@@ -716,23 +728,7 @@
       e.preventDefault();
 
       Array.from(e.changedTouches).forEach((touch)=>{
-        const touchData = mobileTouches.get(touch.identifier);
-        if (!touchData) return;
-
-        clearTimeout(touchData.holdTimer);
-
-        const duration = performance.now() - touchData.startTime;
-        const moved = Math.hypot(
-          touch.clientX - touchData.startX,
-          touch.clientY - touchData.startY
-        );
-        const wasTap = !touchData.walking && duration <= MOBILE_TAP_MAX_MS && moved <= MOBILE_TAP_MAX_MOVE;
-
         mobileTouches.delete(touch.identifier);
-
-        if (wasTap){
-          mobileJump();
-        }
       });
 
       updateMobileWalkingDirection();
@@ -743,8 +739,6 @@
       e.preventDefault();
 
       Array.from(e.changedTouches).forEach((touch)=>{
-        const touchData = mobileTouches.get(touch.identifier);
-        if (touchData) clearTimeout(touchData.holdTimer);
         mobileTouches.delete(touch.identifier);
       });
 
@@ -757,7 +751,6 @@
     game.addEventListener('touchcancel', handleGameTouchCancel, { passive:false });
 
     window.addEventListener('blur', ()=>{
-      mobileTouches.forEach((touch)=>clearTimeout(touch.holdTimer));
       mobileTouches.clear();
       keys.left = false;
       keys.right = false;
@@ -918,6 +911,8 @@
       streetX=0; enemies.length=0; bullets.length=0; sandwiches.length=0;
       enemiesEntered=0; lastSandoThreshold=0;
       spawnTimer=0; paused=false; pauseOverlay.style.display='none';
+      mobileTouches.clear();
+      keys.left=false; keys.right=false; keys.jump=false;
 
       player.dy=0; player.onGround=true; player.facing='front'; player.walkTime=0; player.bobPhase=0; player.y=groundY-player.h;
       player.jumping=false; player.jumpHolding=false;
@@ -930,6 +925,7 @@
     function startGame(){
       splash.style.display="none"; game.style.display="flex";
       try { if (game.requestFullscreen) game.requestFullscreen().catch(()=>{}); } catch(e){}
+      try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(()=>{}); } catch(e){}
       resizeCanvas();
       reloadSandoImage(true);
       applyConfigToUI(); // keep panel fields in sync when you open it later
