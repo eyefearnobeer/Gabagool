@@ -2,17 +2,32 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Gabagool</title>
 
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
   <style>
-    body { margin:0; background:#000; color:#fff; font-family:monospace; overflow:hidden; }
+    html, body {
+      margin:0;
+      padding:0;
+      width:100%;
+      height:100%;
+      background:#000;
+      color:#fff;
+      font-family:monospace;
+      overflow:hidden;
+      touch-action:none;
+      overscroll-behavior:none;
+      user-select:none;
+      -webkit-user-select:none;
+      -webkit-touch-callout:none;
+    }
     #splashContainer, #gameContainer {
       width:100%; height:100%;
       display:flex; flex-direction:column; justify-content:center; align-items:center;
     }
     #gameContainer { display:none; position:relative; background:#000; }
-    canvas#gameCanvas { display:block; background:#000; image-rendering:pixelated; width:100vw; height:100vh; }
+    canvas#gameCanvas { display:block; background:#000; image-rendering:pixelated; width:100vw; height:100vh; touch-action:none; }
 
     #overlay, #pauseOverlay {
       position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column;
@@ -593,6 +608,162 @@
         player.jumpHoldStart = performance.now();
       }
     }
+
+    /* ---------- Mobile Touch Controls ----------
+       Quick tap anywhere = jump
+       Hold left side = walk left
+       Hold right side = walk right
+       Hold one side with one finger, tap with another finger = jump
+    ------------------------------------------------ */
+    const MOBILE_TAP_MAX_MS = 180;
+    const MOBILE_TAP_MAX_MOVE = 22;
+    const MOBILE_HOLD_TO_WALK_MS = 90;
+    const mobileTouches = new Map();
+
+    function isInteractiveTouchTarget(target){
+      return target && target.closest && target.closest('button, input, select, textarea, #devPanel');
+    }
+
+    function mobileJump(){
+      if (!running || paused) return;
+
+      keys.jump = true;
+      tryStartJump();
+
+      // Give tap-jump a tiny hold so it has some height, then release it.
+      setTimeout(()=>{
+        keys.jump = false;
+        player.jumpHolding = false;
+      }, 110);
+    }
+
+    function updateMobileWalkingDirection(){
+      let touchingLeft = false;
+      let touchingRight = false;
+      const midScreen = window.innerWidth / 2;
+
+      mobileTouches.forEach((touch)=>{
+        if (!touch.walking) return;
+        if (touch.x < midScreen) touchingLeft = true;
+        else touchingRight = true;
+      });
+
+      if (touchingLeft && !touchingRight){
+        keys.left = true;
+        keys.right = false;
+      } else if (touchingRight && !touchingLeft){
+        keys.right = true;
+        keys.left = false;
+      } else {
+        keys.left = false;
+        keys.right = false;
+      }
+    }
+
+    function handleGameTouchStart(e){
+      if (!running || isInteractiveTouchTarget(e.target)) return;
+      e.preventDefault();
+
+      Array.from(e.changedTouches).forEach((touch)=>{
+        const id = touch.identifier;
+        const touchData = {
+          startX: touch.clientX,
+          startY: touch.clientY,
+          x: touch.clientX,
+          y: touch.clientY,
+          startTime: performance.now(),
+          walking: false,
+          holdTimer: null
+        };
+
+        touchData.holdTimer = setTimeout(()=>{
+          const stillActive = mobileTouches.get(id);
+          if (!stillActive) return;
+          stillActive.walking = true;
+          updateMobileWalkingDirection();
+        }, MOBILE_HOLD_TO_WALK_MS);
+
+        mobileTouches.set(id, touchData);
+      });
+    }
+
+    function handleGameTouchMove(e){
+      if (!running || isInteractiveTouchTarget(e.target)) return;
+      e.preventDefault();
+
+      Array.from(e.changedTouches).forEach((touch)=>{
+        const touchData = mobileTouches.get(touch.identifier);
+        if (!touchData) return;
+
+        touchData.x = touch.clientX;
+        touchData.y = touch.clientY;
+
+        const moved = Math.hypot(
+          touchData.x - touchData.startX,
+          touchData.y - touchData.startY
+        );
+
+        if (moved > MOBILE_TAP_MAX_MOVE){
+          touchData.walking = true;
+        }
+      });
+
+      updateMobileWalkingDirection();
+    }
+
+    function handleGameTouchEnd(e){
+      if (!running || isInteractiveTouchTarget(e.target)) return;
+      e.preventDefault();
+
+      Array.from(e.changedTouches).forEach((touch)=>{
+        const touchData = mobileTouches.get(touch.identifier);
+        if (!touchData) return;
+
+        clearTimeout(touchData.holdTimer);
+
+        const duration = performance.now() - touchData.startTime;
+        const moved = Math.hypot(
+          touch.clientX - touchData.startX,
+          touch.clientY - touchData.startY
+        );
+        const wasTap = !touchData.walking && duration <= MOBILE_TAP_MAX_MS && moved <= MOBILE_TAP_MAX_MOVE;
+
+        mobileTouches.delete(touch.identifier);
+
+        if (wasTap){
+          mobileJump();
+        }
+      });
+
+      updateMobileWalkingDirection();
+    }
+
+    function handleGameTouchCancel(e){
+      if (isInteractiveTouchTarget(e.target)) return;
+      e.preventDefault();
+
+      Array.from(e.changedTouches).forEach((touch)=>{
+        const touchData = mobileTouches.get(touch.identifier);
+        if (touchData) clearTimeout(touchData.holdTimer);
+        mobileTouches.delete(touch.identifier);
+      });
+
+      updateMobileWalkingDirection();
+    }
+
+    game.addEventListener('touchstart', handleGameTouchStart, { passive:false });
+    game.addEventListener('touchmove', handleGameTouchMove, { passive:false });
+    game.addEventListener('touchend', handleGameTouchEnd, { passive:false });
+    game.addEventListener('touchcancel', handleGameTouchCancel, { passive:false });
+
+    window.addEventListener('blur', ()=>{
+      mobileTouches.forEach((touch)=>clearTimeout(touch.holdTimer));
+      mobileTouches.clear();
+      keys.left = false;
+      keys.right = false;
+      keys.jump = false;
+      player.jumpHolding = false;
+    });
 
     /* ---------- Loop / Spawn Logic ---------- */
     function spawnLogic(dt){
